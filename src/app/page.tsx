@@ -1,65 +1,146 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useEffect, useRef } from "react";
 
 export default function Home() {
+  const [url, setUrl] = useState("");
+  const [serverTime, setServerTime] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [darkMode, setDarkMode] = useState(false);
+  const [timeOffset, setTimeOffset] = useState<number | null>(null);
+  const [syncedUrl, setSyncedUrl] = useState<string | null>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 시스템 다크모드 감지 및 localStorage 저장
+  useEffect(() => {
+    const saved = localStorage.getItem("darkMode");
+    if (saved !== null) {
+      setDarkMode(saved === "true");
+    } else {
+      setDarkMode(window.matchMedia("(prefers-color-scheme: dark)").matches);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("darkMode", String(darkMode));
+  }, [darkMode]);
+
+  // 실시간 동기화: offset을 기반으로 매 100ms마다 시간 업데이트
+  useEffect(() => {
+    if (timeOffset !== null) {
+      intervalRef.current = setInterval(() => {
+        const now = Date.now() + timeOffset;
+        setServerTime(new Date(now).toISOString());
+      }, 100);
+    }
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [timeOffset]);
+
+  const fetchServerTime = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/server-time", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to fetch");
+      }
+
+      // 서버 시간과 로컬 시간의 차이(offset) 계산
+      const offset = data.serverTime - Date.now();
+      setTimeOffset(offset);
+      setSyncedUrl(data.url);
+      setServerTime(data.serverTimeISO);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+      setTimeOffset(null);
+      setSyncedUrl(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !loading) {
+      fetchServerTime();
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <main
+      className={`min-h-screen flex flex-col items-center justify-center p-8 transition-colors ${
+        darkMode ? "bg-gray-900 text-white" : "bg-gray-100 text-black"
+      }`}
+    >
+      {/* 다크모드 토글 버튼 */}
+      <button
+        onClick={() => setDarkMode(!darkMode)}
+        className={`absolute top-4 right-4 p-2 rounded-lg transition-colors ${
+          darkMode
+            ? "bg-gray-700 hover:bg-gray-600"
+            : "bg-gray-200 hover:bg-gray-300"
+        }`}
+      >
+        {darkMode ? "☀️" : "🌙"}
+      </button>
+
+      <h1 className="text-3xl font-bold mb-8">Time Sync</h1>
+
+      <div className="flex gap-2 mb-8">
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="www.naver.com"
+          className={`px-4 py-2 border rounded-lg w-80 ${
+            darkMode
+              ? "bg-gray-800 border-gray-600 text-white placeholder-gray-400"
+              : "bg-white border-gray-300 text-black"
+          }`}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+        <button
+          onClick={fetchServerTime}
+          disabled={loading}
+          className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
+        >
+          {loading ? "Loading..." : "Sync"}
+        </button>
+      </div>
+
+      {error && <p className="text-red-500 mb-4">{error}</p>}
+
+      {serverTime && (
+        <div className="text-center">
+          {syncedUrl && (
+            <p className={`mb-2 text-sm ${darkMode ? "text-gray-500" : "text-gray-500"}`}>
+              {syncedUrl}
+            </p>
+          )}
+          <p className={`mb-2 ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
+            Server Time:
           </p>
+          <p className="text-4xl font-mono">{serverTime}</p>
+          {timeOffset !== null && (
+            <p className={`mt-4 text-sm ${darkMode ? "text-gray-500" : "text-gray-500"}`}>
+              Offset: {timeOffset > 0 ? "+" : ""}{timeOffset}ms
+            </p>
+          )}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+      )}
+    </main>
   );
 }
