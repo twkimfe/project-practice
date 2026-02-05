@@ -1,29 +1,66 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+
+const STORAGE_KEY = "darkMode:v1";
+
+function getStoredDarkMode(): boolean | null {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored !== null ? stored === "true" : null;
+  } catch {
+    return null;
+  }
+}
+
+function setStoredDarkMode(value: boolean): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, String(value));
+  } catch {
+    // localStorage unavailable (incognito, quota exceeded, etc.)
+  }
+}
+
+// Date 객체를 yyyy-mm-dd hh:mm:ss.xxx 형식의 문자열로 변환하는 함수
+function formatTime(date: Date): string {
+  // 각 시간 요소를 추출하고 2자리(밀리초는 3자리)로 패딩
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0"); // 월은 0부터 시작하므로 +1
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  const ms = String(date.getMilliseconds()).padStart(3, "0"); // 밀리초는 3자리
+
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}.${ms}`;
+}
 
 export default function Home() {
   const [url, setUrl] = useState("");
   const [serverTime, setServerTime] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState<boolean | null>(null);
   const [timeOffset, setTimeOffset] = useState<number | null>(null);
   const [syncedUrl, setSyncedUrl] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // 시스템 다크모드 감지 및 localStorage 저장
   useEffect(() => {
-    const saved = localStorage.getItem("darkMode");
-    if (saved !== null) {
-      setDarkMode(saved === "true");
+    const stored = getStoredDarkMode();
+    if (stored !== null) {
+      setDarkMode(stored);
     } else {
-      setDarkMode(window.matchMedia("(prefers-color-scheme: dark)").matches);
+      setDarkMode(
+        window.matchMedia("(prefers-color-scheme: dark)").matches,
+      );
     }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("darkMode", String(darkMode));
+    if (darkMode !== null) {
+      setStoredDarkMode(darkMode);
+    }
   }, [darkMode]);
 
   // 실시간 동기화: offset을 기반으로 매 100ms마다 시간 업데이트
@@ -31,7 +68,7 @@ export default function Home() {
     if (timeOffset !== null) {
       intervalRef.current = setInterval(() => {
         const now = Date.now() + timeOffset;
-        setServerTime(new Date(now).toISOString());
+        setServerTime(formatTime(new Date(now)));
       }, 100);
     }
 
@@ -42,7 +79,7 @@ export default function Home() {
     };
   }, [timeOffset]);
 
-  const fetchServerTime = async () => {
+  const fetchServerTime = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -63,7 +100,7 @@ export default function Home() {
       const offset = data.serverTime - Date.now();
       setTimeOffset(offset);
       setSyncedUrl(data.url);
-      setServerTime(data.serverTimeISO);
+      setServerTime(formatTime(new Date(data.serverTime)));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
       setTimeOffset(null);
@@ -71,30 +108,51 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [url]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !loading) {
-      fetchServerTime();
-    }
-  };
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter" && !loading) {
+        fetchServerTime();
+      }
+    },
+    [loading, fetchServerTime],
+  );
+
+  const toggleDarkMode = useCallback(() => {
+    setDarkMode((prev) => !prev);
+  }, []);
+
+  // Hydration 완료 전에는 skeleton 표시
+  if (darkMode === null) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="animate-pulse text-gray-400">Loading...</div>
+      </main>
+    );
+  }
+
+  const isDark = darkMode;
 
   return (
     <main
       className={`min-h-screen flex flex-col items-center justify-center p-8 transition-colors ${
-        darkMode ? "bg-gray-900 text-white" : "bg-gray-100 text-black"
+        isDark ? "bg-gray-900 text-white" : "bg-gray-100 text-black"
       }`}
     >
       {/* 다크모드 토글 버튼 */}
       <button
-        onClick={() => setDarkMode(!darkMode)}
+        onClick={toggleDarkMode}
         className={`absolute top-4 right-4 p-2 rounded-lg transition-colors ${
-          darkMode
+          isDark
             ? "bg-gray-700 hover:bg-gray-600"
             : "bg-gray-200 hover:bg-gray-300"
         }`}
+        aria-label={
+          isDark ? "Switch to light mode" : "Switch to dark mode"
+        }
       >
-        {darkMode ? "☀️" : "🌙"}
+        {isDark ? "☀️" : "🌙"}
       </button>
 
       <h1 className="text-3xl font-bold mb-8">Time Sync</h1>
@@ -105,9 +163,9 @@ export default function Home() {
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="www.naver.com"
+          placeholder="사이트 주소를 입력하세요"
           className={`px-4 py-2 border rounded-lg w-80 ${
-            darkMode
+            isDark
               ? "bg-gray-800 border-gray-600 text-white placeholder-gray-400"
               : "bg-white border-gray-300 text-black"
           }`}
@@ -126,17 +184,18 @@ export default function Home() {
       {serverTime && (
         <div className="text-center">
           {syncedUrl && (
-            <p className={`mb-2 text-sm ${darkMode ? "text-gray-500" : "text-gray-500"}`}>
-              {syncedUrl}
-            </p>
+            <p className="mb-2 text-sm text-gray-500">{syncedUrl}</p>
           )}
-          <p className={`mb-2 ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
+          <p
+            className={`mb-2 ${isDark ? "text-gray-400" : "text-gray-600"}`}
+          >
             Server Time:
           </p>
           <p className="text-4xl font-mono">{serverTime}</p>
           {timeOffset !== null && (
-            <p className={`mt-4 text-sm ${darkMode ? "text-gray-500" : "text-gray-500"}`}>
-              Offset: {timeOffset > 0 ? "+" : ""}{timeOffset}ms
+            <p className="mt-4 text-sm text-gray-500">
+              Offset: {timeOffset > 0 ? "+" : ""}
+              {timeOffset}ms
             </p>
           )}
         </div>
